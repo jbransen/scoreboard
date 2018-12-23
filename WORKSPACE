@@ -179,6 +179,26 @@ maven_jar(
   artifact = "org.lwjgl:lwjgl-opengl:jar:natives-linux:3.2.1",
 )
 
+maven_jar(
+  name = "lwjgl_stb",
+  artifact = "org.lwjgl:lwjgl-stb:jar:3.2.1",
+)
+
+maven_jar(
+  name = "lwjgl_stb_natives_linux",
+  artifact = "org.lwjgl:lwjgl-stb:jar:natives-linux:3.2.1",
+)
+
+maven_jar(
+  name = "lwjgl_jemalloc",
+  artifact = "org.lwjgl:lwjgl-jemalloc:jar:3.2.1",
+)
+
+maven_jar(
+  name = "lwjgl_jemalloc_natives_linux",
+  artifact = "org.lwjgl:lwjgl-jemalloc:jar:natives-linux:3.2.1",
+)
+
 http_archive(
   name = "six_archive",
   url = "https://pypi.python.org/packages/source/s/six/six-1.10.0.tar.gz#md5=34eed507548117b2ab523ab14b2f8b55",

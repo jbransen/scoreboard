@@ -17,11 +17,15 @@ java_binary(
     "@jewelcli//jar",
     "@lwjgl//jar",
     "@lwjgl_glfw//jar",
+    "@lwjgl_jemalloc//jar",
     "@lwjgl_opengl//jar",
+    "@lwjgl_stb//jar",
   ],
   runtime_deps =[
     "@lwjgl_natives_linux//jar",
     "@lwjgl_glfw_natives_linux//jar",
+    "@lwjgl_jemalloc_natives_linux//jar",
     "@lwjgl_opengl_natives_linux//jar",
+    "@lwjgl_stb_natives_linux//jar",
   ],
 )

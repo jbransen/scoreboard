@@ -30,6 +30,7 @@ public class Renderer implements ResolverController.Observer {
   private final Queue<RankAnimation> moveAnimation = new ArrayDeque<>();
   private final Queue<RankAnimation> scrollAnimation = new ArrayDeque<>();
   private final Particles particles;
+  private final FontRenderer font;
 
   double screenWidth;
   double screenHeight;
@@ -37,6 +38,8 @@ public class Renderer implements ResolverController.Observer {
   double cellWidth;
   double cellHeight;
   double cellMargin;
+
+  double teamLabelWidth;
 
   double rowWidth;
   double rowHeight;
@@ -53,11 +56,8 @@ public class Renderer implements ResolverController.Observer {
   public Renderer(ScoreboardModel model) {
     this.model = model;
 
-    if (ENABLE_PARTICLES) {
-      this.particles = new Particles();
-    } else {
-      this.particles = null;
-    }
+    this.particles = ENABLE_PARTICLES ? new Particles() : null;
+    this.font = new FontRenderer();
 
     focusedTeam = null;
     focusedProblem = null;
@@ -67,7 +67,12 @@ public class Renderer implements ResolverController.Observer {
   public void setVideoMode(GLFWVidMode videoMode) {
     screenWidth = videoMode.width();
     screenHeight = videoMode.height();
-    particles.setVideoSize(screenWidth, screenHeight);
+    if (particles != null) {
+      particles.setVideoSize(screenWidth, screenHeight);
+    }
+    if (font != null) {
+      font.setVideoSize(screenWidth, screenHeight);
+    }
 
     cellWidth = (int) (60 * screenWidth / 1000.0);
     cellHeight = cellWidth / (1.0 + Math.sqrt(5));
@@ -76,12 +81,14 @@ public class Renderer implements ResolverController.Observer {
     rowWidth = (cellWidth + cellMargin) * model.getProblems().size();
     rowHeight = cellHeight + cellMargin;
 
+    teamLabelWidth = 400;
+
     minScrolledRank = + (1*screenHeight + 1*cellMargin) / (rowHeight + cellMargin)
          - visibleRowsBelow;
     maxScrolledRank = + (0*screenHeight + 2*cellMargin) / (rowHeight + cellMargin)
          - visibleRowsBelow + model.getRows().size();
 
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClearColor(0.1f, 0.1f, 0.1f, 0.1f);
     glViewport(0, 0, videoMode.width(), videoMode.height());
     glOrtho(
         0, videoMode.width(),
@@ -154,13 +161,15 @@ public class Renderer implements ResolverController.Observer {
         effectiveRank = (double) row.getRank();
       }
 
-      final double rowX = 300;
+      final double rowX = (screenWidth - teamLabelWidth - rowWidth) / 2.0 + teamLabelWidth;
       final double rowY = baseY - effectiveRank * (rowHeight + cellMargin) - cellMargin;
 
       if (0 <= rowY + rowHeight && rowY <= screenHeight) {
         drawRow(rowX, rowY, row, teamFocused, teamFocused ? focusedProblem: null);
       }
     }
+
+    font.drawText(10.0, 10.0, "Hello World 😁 hi 汉");
 
     if (particles != null && particles.update(timeNow)) {
       particles.draw();
@@ -203,7 +212,7 @@ public class Renderer implements ResolverController.Observer {
   }
 
   private void drawFocus(double rowX, double rowY) {
-    glColor3d(0.0, 0.0, 0.3);
+    glColor3d(0.1, 0.1, 0.5);
     glBegin(GL_QUADS);
     glVertex2d(0,rowY - cellMargin / 2);
     glVertex2d(screenWidth, rowY - cellMargin / 2);
@@ -213,6 +222,7 @@ public class Renderer implements ResolverController.Observer {
   }
 
   private void drawLabel(double rowX, double rowY, Team team) {
+/*
     glColor3d(0.1, 0.1, 0.1);
     glBegin(GL_QUADS);
     glVertex2d(rowX-180,rowY);
@@ -220,6 +230,10 @@ public class Renderer implements ResolverController.Observer {
     glVertex2d(rowX- 20,rowY+rowHeight);
     glVertex2d(rowX-180,rowY+rowHeight);
     glEnd();
+*/
+    glColor3d(1.0, 1.0, 1.0);
+    font.drawText(rowX - teamLabelWidth, rowY + rowHeight / 2.0, team.getName());
+    font.drawText(rowX - teamLabelWidth, rowY + rowHeight / 2.0 - 26, model.getOrganization(team.getOrganizationId()).getName());
   }
 
   private void drawAttempts(double cellX, double cellY, ScoreboardProblem attempts, boolean focused) {
@@ -245,7 +259,7 @@ public class Renderer implements ResolverController.Observer {
     // does not make any guarantees about running at the right time. Trigger
     // this directly inside the state change.
     if (focused && particles != null && dirtyParticles) {
-      for (int i = 0; i < 2000; i++) {
+      for (int i = 0; i < 4000; i++) {
         double vx = Math.random() - 0.5;
         double vy = Math.random() - 0.5;
         double x = cellX + (vx + 0.5) * cellWidth;
