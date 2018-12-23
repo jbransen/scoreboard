@@ -51,17 +51,19 @@ public class Renderer implements ResolverController.Observer {
   private Team focusedTeam;
   private Problem focusedProblem;
   private int focusedRank;
+  private int finalisedRank;
   private boolean dirtyParticles;
 
   public Renderer(ScoreboardModel model) {
     this.model = model;
 
     this.particles = ENABLE_PARTICLES ? new Particles() : null;
-    this.font = new FontRenderer();
+    this.font = new FontRenderer(model);
 
     focusedTeam = null;
     focusedProblem = null;
     focusedRank = model.getRows().size();
+    finalisedRank = focusedRank + 1;
   }
 
   public void setVideoMode(GLFWVidMode videoMode) {
@@ -74,19 +76,20 @@ public class Renderer implements ResolverController.Observer {
       font.setVideoSize(screenWidth, screenHeight);
     }
 
-    cellWidth = (int) (60 * screenWidth / 1000.0);
+    teamLabelWidth = screenWidth / 3.0;
+
+    cellWidth = (int) ((screenWidth - teamLabelWidth - cellMargin * 4) / Math.max(4, model.getProblems().size())) * 0.9;
     cellHeight = cellWidth / (1.0 + Math.sqrt(5));
     cellMargin = cellWidth / 10;
 
     rowWidth = (cellWidth + cellMargin) * model.getProblems().size();
     rowHeight = cellHeight + cellMargin;
 
-    teamLabelWidth = 400;
-
     minScrolledRank = + (1*screenHeight + 1*cellMargin) / (rowHeight + cellMargin)
          - visibleRowsBelow;
-    maxScrolledRank = + (0*screenHeight + 2*cellMargin) / (rowHeight + cellMargin)
-         - visibleRowsBelow + model.getRows().size();
+    maxScrolledRank = Math.max(minScrolledRank,
+        + (0*screenHeight + 2*cellMargin) / (rowHeight + cellMargin)
+             - visibleRowsBelow + model.getRows().size());
 
     glClearColor(0.1f, 0.1f, 0.1f, 0.1f);
     glViewport(0, 0, videoMode.width(), videoMode.height());
@@ -117,6 +120,11 @@ public class Renderer implements ResolverController.Observer {
     final long duration = TimeUnit.MILLISECONDS.toNanos(500);
     moveAnimation.offer(RankAnimation.create(
         rankFrom, rankTo, System.nanoTime() + duration / 2, duration));
+  }
+
+  @Override
+  public void onTeamRankFinalised(Team team, int rank) {
+    finalisedRank = rank;
   }
 
   private double getScrolledRank(RankAnimation anim, long timeNow) {
@@ -169,8 +177,6 @@ public class Renderer implements ResolverController.Observer {
       }
     }
 
-    font.drawText(10.0, 10.0, "Hello World 😁 hi 汉");
-
     if (particles != null && particles.update(timeNow)) {
       particles.draw();
       return true;
@@ -188,7 +194,11 @@ public class Renderer implements ResolverController.Observer {
     if (teamFocused) {
       drawFocus(rowX, rowY);
     }
-    drawLabel(rowX, rowY, model.getTeam(row.getTeamId()));
+    if (row.getRank() >= finalisedRank) {
+      drawRank(rowX, rowY, row.getRank());
+    }
+    drawLabel(rowX, rowY, model.getTeam(row.getTeamId()), teamFocused);
+    drawScore(rowX, rowY, row.getScore(), teamFocused);
 
     for (int i = 0; i < row.getProblemsList().size(); i++) {
       final ScoreboardProblem attempts = row.getProblemsList().get(i);
@@ -221,44 +231,61 @@ public class Renderer implements ResolverController.Observer {
     glEnd();
   }
 
-  private void drawLabel(double rowX, double rowY, Team team) {
-/*
-    glColor3d(0.1, 0.1, 0.1);
-    glBegin(GL_QUADS);
-    glVertex2d(rowX-180,rowY);
-    glVertex2d(rowX- 20,rowY);
-    glVertex2d(rowX- 20,rowY+rowHeight);
-    glVertex2d(rowX-180,rowY+rowHeight);
-    glEnd();
-*/
-    glColor3d(1.0, 1.0, 1.0);
-    font.drawText(rowX - teamLabelWidth, rowY + rowHeight / 2.0, team.getName());
-    font.drawText(rowX - teamLabelWidth, rowY + rowHeight / 2.0 - 26, model.getOrganization(team.getOrganizationId()).getName());
+  private void drawRank(double rowX, double rowY, long rank) {
+    glColor3d(0.4, 0.4, 0.4);
+    font.drawText(
+        rowX - teamLabelWidth,
+        rowY + cellMargin / 2.0,
+        (int) (cellHeight - cellMargin),
+        String.format("%-2d", rank));
+  }
+
+  private void drawLabel(double rowX, double rowY, Team team, boolean focused) {
+    glColor3d(0.4, 0.4, 0.4);
+    font.drawText(rowX - teamLabelWidth * 0.9, rowY + cellMargin / 2.0, (int) (cellHeight / 4.0), model.getOrganization(team.getOrganizationId()).getName());
+    if (focused) {
+      glColor3d(1.0, 1.0, 1.0);
+    }
+    font.drawText(rowX - teamLabelWidth * 0.9, rowY + rowHeight / 2.0, (int) (cellHeight / 2.0), team.getName());
+  }
+
+  private void drawScore(double rowX, double rowY, ScoreboardScore score, boolean focused) {
+    if (focused) {
+      glColor3d(1.0, 1.0, 1.0);
+    } else {
+      glColor3d(0.4, 0.4, 0.4);
+    }
+    font.drawText(
+        rowX - teamLabelWidth / 8.0,
+        rowY + cellMargin / 2.0,
+        (int) (cellHeight - cellMargin),
+        String.format("%-3d", score.getNumSolved()));
   }
 
   private void drawAttempts(double cellX, double cellY, ScoreboardProblem attempts, boolean focused) {
     final boolean pending = (attempts.getNumPending() > 0);
     final boolean attempted = (attempts.getNumJudged() > 0 || pending);
+    final String text;
 
     float r = 0.0f, g = 0.0f, b = 0.0f;
     if (attempts.getSolved()) {
       g = 0.8f;
+      text = (attempts.getNumJudged() == 1 ? "+" : String.format("%d", attempts.getNumJudged() - 1));
     } else if (attempts.getNumPending() > 0) {
-      if (focused) {
-        r = 1.0f; g = 1.0f; b = 1.0f;
-      } else {
-        b = 1.0f;
-      }
+      b = 1.0f;
+      text = null;
     } else if (attempts.getNumJudged() > 0) {
       r = 1.0f;
+      text = String.format("-%d", attempts.getNumJudged());
     } else {
       r = 0.025f; g = 0.025f; b = 0.025f;
+      text = null;
     }
 
     // TODO: minor race condition because of firing from inside UI code which
     // does not make any guarantees about running at the right time. Trigger
     // this directly inside the state change.
-    if (focused && particles != null && dirtyParticles) {
+    if (focused && !pending && particles != null && dirtyParticles) {
       for (int i = 0; i < 4000; i++) {
         double vx = Math.random() - 0.5;
         double vy = Math.random() - 0.5;
@@ -289,7 +316,11 @@ public class Renderer implements ResolverController.Observer {
     }
 
     if (true) {
-      glColor3f(r, g, b);
+      if (focused && pending) {
+        glColor3f(1.0f, 1.0f, 1.0f);
+      } else {
+        glColor3f(r, g, b);
+      }
       glBegin(GL_QUADS);
       glVertex2d(cellX,cellY);
       glVertex2d(cellX+cellWidth,cellY);
@@ -306,6 +337,10 @@ public class Renderer implements ResolverController.Observer {
       glVertex2d(cellX+cellWidth, cellY+cellHeight-cellHeight/8.0);
       glVertex2d(cellX+cellHeight/8.0, cellY+cellHeight-cellHeight/8.0);
       glEnd();
+    }
+
+    if (text != null) {
+      font.drawText(cellX+cellWidth/2 - cellHeight * 0.1, cellY + cellHeight * 0.2, (int) (cellHeight * 0.6), text);
     }
   }
 

@@ -1,38 +1,30 @@
 package me.hex539.resolver;
 
-import com.google.auto.value.AutoValue;
 
 import java.io.*;
 
-
+import java.util.List;
+import java.util.Collections;
+import java.util.ArrayList;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.nio.FloatBuffer;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
-import java.util.ArrayDeque;
-import java.util.EnumSet;
-import java.util.Queue;
-import java.util.concurrent.TimeUnit;
+import java.util.Map;
+import java.util.HashMap;
 
 import edu.clics.proto.ClicsProto.*;
 
 import me.hex539.contest.ScoreboardModel;
-import me.hex539.contest.ResolverController;
 
-import org.lwjgl.glfw.GLFWVidMode;
 import org.lwjgl.BufferUtils;
 
 import org.lwjgl.stb.STBTTAlignedQuad;
-import org.lwjgl.stb.STBTTBakedChar;
 import org.lwjgl.stb.STBTTFontinfo;
+import org.lwjgl.stb.STBTTPackContext;
+import org.lwjgl.stb.STBTTPackRange;
+import org.lwjgl.stb.STBTTPackedchar;
 import org.lwjgl.system.MemoryStack;
 
 import static org.lwjgl.glfw.GLFW.*;
@@ -48,28 +40,68 @@ import static org.lwjgl.system.MemoryStack.*;
 
 public class FontRenderer {
 
-  private static final int WIDTH = 512;
-  private static final int HEIGHT = 512;
-  private static final int FONT_HEIGHT = 24;
+  private static final int WIDTH = 512 * 8;
+  private static final int HEIGHT = 512 * 8;
 
-  private final ByteBuffer ttfData;
-
-  private final STBTTFontinfo fontInfo;
+  private final ByteBuffer[] ttfData = new ByteBuffer[1];
+  private final STBTTFontinfo[] fontInfo = new STBTTFontinfo[1];
   private int ascent;
   private int descent;
   private int lineGap;
 
-  private STBTTBakedChar.Buffer cdata = null;
-  private int texId = 0;
+  private Map<Integer, Font> fonts = new HashMap<>();
+  private final List<Integer> allCodePoints = new ArrayList<>();
+
+  private static class Font {
+    public final int height;
+    public final int texId;
+    public final STBTTPackedchar.Buffer cdata;
+
+    public Font(final int height, final int texId, final STBTTPackedchar.Buffer cdata) {
+      this.height = height;
+      this.texId = texId;
+      this.cdata = cdata;
+    }
+  }
 
   private double screenWidth = 1;
   private double screenHeight = 1;
 
-  public FontRenderer() {
-    ttfData = mapResource("/resources/fonts/FiraSans-Regular.ttf");
+  private int indexOfGlyph(int codePoint) {
+    int l = 0, r = allCodePoints.size();
+    while (l + 1 < r) {
+      int x = (l + r) / 2;
+      if (allCodePoints.get(x) <= codePoint) {
+        l = x;
+      } else {
+        r = x;
+      }
+    }
+    return l;
+  }
 
-    fontInfo = STBTTFontinfo.create();
-    if (!stbtt_InitFont(fontInfo, ttfData)) {
+  private static void addString(List<Integer> list, String str) {
+    for (int i = 0, to = str.length(); i < to; ) {
+      char c1 = str.charAt(i);
+      if (Character.isHighSurrogate(c1) && i + 1 < to) {
+        char c2 = str.charAt(i + 1);
+        if (Character.isLowSurrogate(c2)) {
+          list.add(Character.toCodePoint(c1, c2));
+          i += 2;
+        }
+      }
+      list.add((int) c1);
+      i += 1;
+    }
+  }
+
+  public FontRenderer(ScoreboardModel model) {
+    ttfData[0] = mapResource("/resources/fonts/unifont-11.0.03.ttf");
+
+    supplyCodePoints(model, allCodePoints);
+
+    fontInfo[0] = STBTTFontinfo.create();
+    if (!stbtt_InitFont(fontInfo[0], ttfData[0])) {
       throw new IllegalStateException("Failed to initialize font information.");
     }
 
@@ -77,32 +109,71 @@ public class FontRenderer {
       final IntBuffer pAscent  = stack.mallocInt(1);
       final IntBuffer pDescent = stack.mallocInt(1);
       final IntBuffer pLineGap = stack.mallocInt(1);
-      stbtt_GetFontVMetrics(fontInfo, pAscent, pDescent, pLineGap);
+      stbtt_GetFontVMetrics(fontInfo[0], pAscent, pDescent, pLineGap);
       this.ascent = pAscent.get(0);
       this.descent = pDescent.get(0);
       this.lineGap = pLineGap.get(0);
     }
   }
 
-  private void initGraphics() {
-    texId = glGenTextures();
-    cdata = STBTTBakedChar.malloc(128500);
+  private static void supplyCodePoints(ScoreboardModel model, List<Integer> into){
+    List<Integer> codePoints = new ArrayList<>();
+    for (int i = 32; i < 128; i++) {
+      codePoints.add(i);
+    }
+    for (Team team : model.getTeams()) {
+      addString(codePoints, team.getName());
+    }
+    for (Organization organisation : model.getOrganizations()) {
+      addString(codePoints, organisation.getName());
+    }
+    Collections.sort(codePoints);
+    int last = -1;
+    for (int i : codePoints) {
+      if (i != last) {
+        into.add(i);
+        last = i;
+      }
+    }
+  }
+
+  private Font initGraphics(int fontHeight) {
+    Font font = new Font(
+        /* height= */ fontHeight,
+        /* texId= */ glGenTextures(),
+        /* cdata[]= */ STBTTPackedchar.malloc(allCodePoints.size()));
 
     ByteBuffer bitmap = BufferUtils.createByteBuffer(WIDTH * HEIGHT);
-    stbtt_BakeFontBitmap(ttfData, FONT_HEIGHT, bitmap, WIDTH, HEIGHT, 32, cdata);
 
-    glBindTexture(GL_TEXTURE_2D, texId);
+    final int stride = 0;
+    final int padding = 1;
+    STBTTPackContext context = STBTTPackContext.create();
+    stbtt_PackBegin(context, bitmap, WIDTH, HEIGHT, stride, padding);
+
+    IntBuffer buffer = BufferUtils.createIntBuffer(allCodePoints.size());
+    for (int i : allCodePoints) {
+      buffer.put(i);
+    }
+    buffer.flip();
+
+    STBTTPackRange.Buffer packRanges = STBTTPackRange.malloc(1);
+    packRanges.put(STBTTPackRange.malloc().set(font.height*0+32, /* start= */ 0, buffer, allCodePoints.size(), font.cdata, (byte) 0, (byte) 0));
+    packRanges.flip();
+    final int fontIndex = 0;
+    stbtt_PackFontRanges(context, ttfData[0], fontIndex, packRanges);
+    stbtt_PackEnd(context);
+
+    glBindTexture(GL_TEXTURE_2D, font.texId);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, WIDTH, HEIGHT, 0, GL_ALPHA, GL_UNSIGNED_BYTE, bitmap);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 
+    return font;
   }
 
   public void destroyGraphics() {
-    if (cdata != null) {
-      // glDeleteTextures(1, &texId);
-      cdata = null;
-    }
+    // glDeleteTextures(1, &texId);
+    fonts.clear();
   }
 
   public void setVideoSize(double width, double height) {
@@ -110,23 +181,26 @@ public class FontRenderer {
     screenHeight = height;
   }
 
-  public void drawText(double x, double y, String text) {
-    if (cdata == null) {
-      initGraphics();
+  public void drawText(double x, double y, int size, String text) {
+    Font font = fonts.get(size);
+    if (font == null) {
+      font = initGraphics(size);
+      fonts.put(size, font);
     }
 
     glEnable(GL_TEXTURE_2D);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    renderText(x, y, text);
+    renderText(font, x, y, text);
 
     glDisable(GL_BLEND);
     glDisable(GL_TEXTURE_2D);
   }
 
-  private void renderText(double startX, double startY, String text) {
-    float scale = stbtt_ScaleForPixelHeight(fontInfo, FONT_HEIGHT);
+  private void renderText(Font font, double startX, double startY, String text) {
+    float scale = (float) stbtt_ScaleForPixelHeight(fontInfo[0], (int) (font.height * 50));
+//    scale *= 64;
 
     try (MemoryStack stack = stackPush()) {
       IntBuffer pCodePoint = stack.mallocInt(1);
@@ -138,11 +212,9 @@ public class FontRenderer {
 
       int lineStart = 0;
 
-      float factorX = 1.0f ;/// getContentScaleX();
-      float factorY = -1.0f ;/// getContentScaleY();
+      float factorX = (float) +scale;
+      float factorY = (float) -scale;
       float lineY = (float) startY;
-
-      glColor3d(1.0, 1.0, 1.0);
 
       glBegin(GL_QUADS);
       for (int i = 0, to = text.length(); i < to; ) {
@@ -155,23 +227,22 @@ public class FontRenderer {
 
           lineStart = i;
           continue;
-//        } else if (cp < 32 || 128 <= cp) {
+//        } else if (cp < 32 || 32 + MAX_GLYPHS <= cp) {
 //          continue;
         }
 
         float cpX = x.get(0);
-        stbtt_GetBakedQuad(cdata, WIDTH, HEIGHT, cp - 32, x, y, q, true);
+        stbtt_GetPackedQuad(font.cdata, WIDTH, HEIGHT, indexOfGlyph(cp), x, y, q, true);
         x.put(0, scale(cpX, x.get(0), factorX));
         if (i < to) {
           getCP(text, to, i, pCodePoint);
-          x.put(0, x.get(0) + stbtt_GetCodepointKernAdvance(fontInfo, cp, pCodePoint.get(0)) * scale);
+          x.put(0, x.get(0) + stbtt_GetGlyphKernAdvance(fontInfo[0], indexOfGlyph(cp), indexOfGlyph(pCodePoint.get(0))) * scale);
         }
 
-        float
-          x0 = scale(cpX, q.x0(), factorX),
-          x1 = scale(cpX, q.x1(), factorX),
-          y0 = scale(lineY, q.y0(), factorY),
-          y1 = scale(lineY, q.y1(), factorY);
+        float x0 = scale(cpX, q.x0(), factorX);
+        float x1 = scale(cpX, q.x1(), factorX);
+        float y0 = scale(lineY, q.y0(), factorY);
+        float y1 = scale(lineY, q.y1(), factorY);
 
         glTexCoord2f(q.s0(), q.t0());
         glVertex2f(x0, y0);
@@ -206,13 +277,12 @@ public class FontRenderer {
     return 1;
   }
 
-
   private ByteBuffer mapResource(String location) {
     try (final InputStream is = getClass().getResourceAsStream(location)) {
       if (is == null) {
         throw new Error("Resource does not exist: " + location);
       }
-      final byte[] data = is.readAllBytes();
+      final byte[] data = readAllBytes(is);
       final ByteBuffer buffer = BufferUtils.createByteBuffer(data.length);
       buffer.put(data, 0, data.length);
       buffer.flip();
@@ -220,5 +290,23 @@ public class FontRenderer {
     } catch (IOException e) {
       throw new Error("Failed to map resource: " + location, e);
     }
+  }
+  /**
+   * Poor implementation of Java9's InputStream.readAllBytes().
+   *
+   * <p>TODO (2019): replace with is.readAllBytes() again once OpenJDK 11 is widely enough
+   * used to not cause issues for people trying to quickly compile without upgrading java.
+   */
+  private byte[] readAllBytes(InputStream is) throws IOException {
+    final byte[] data = new byte[is.available()];
+    for (int i = 0; i < data.length;) {
+      int l = is.read(data, i, data.length - i);
+      if (l != -1) {
+        i += l;
+      } else {
+        break;
+      }
+    }
+    return data;
   }
 }
