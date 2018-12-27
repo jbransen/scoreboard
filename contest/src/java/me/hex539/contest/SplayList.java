@@ -160,6 +160,21 @@ public final class SplayList<T> extends AbstractList<T> implements List<T>, Sort
     return true;
   }
 
+  /**
+   * Only safe to use if {@code p} has the same place in the list as @{code o}.
+   */
+  boolean replaceUnsafe(T o, T p) {
+    if (root == null) {
+      return false;
+    }
+    SplayTree<T> t = root.splay().find((T) o, comparator());
+    if (t == null) {
+      return false;
+    }
+    t.key = p;
+    return true;
+  }
+
   @Override
   public void clear() {
     root = null;
